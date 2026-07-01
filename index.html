@@ -4,6 +4,13 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Attendance Calculator</title>
+<script>
+(function(){
+  var ua = navigator.userAgent || navigator.vendor || window.opera || "";
+  var isIOS = /iPad|iPhone|iPod/.test(ua) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+  if(isIOS){ document.documentElement.className += (document.documentElement.className ? " " : "") + "is-ios"; }
+})();
+</script>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800;900&display=swap');
   :root{
@@ -73,6 +80,43 @@
   }
   input[type="time"]:focus{outline:none; border-color:rgba(77,215,255,.58); box-shadow:0 0 0 4px rgba(77,215,255,.12)}
 
+  /* iOS only: keep Apple's native time picker, but replace the tiny Safari field with a full-size branded display.
+     Android and desktop keep the original native input exactly as before. */
+  .time-native-wrap{position:relative}
+  .ios-time-display{display:none}
+  html.is-ios .time-native-wrap .ios-time-display{
+    display:flex; align-items:center; justify-content:center; gap:10px; pointer-events:none; direction:ltr;
+    background:var(--input-bg); color:var(--ink); border:1.5px solid rgba(255,255,255,.1);
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.05); transition:.18s ease;
+  }
+  html.is-ios .time-native-wrap:focus-within .ios-time-display{
+    border-color:rgba(77,215,255,.58); box-shadow:0 0 0 4px rgba(77,215,255,.12), inset 0 1px 0 rgba(255,255,255,.05);
+  }
+  html.is-ios .punch-row.time-native-wrap{min-height:76px}
+  html.is-ios .punch-row.time-native-wrap input[type="time"]{
+    position:absolute; inset:0; z-index:2; width:100%; height:100%; min-width:0; max-width:none;
+    opacity:0; color:transparent; background:transparent; border:0; padding:0; margin:0;
+    -webkit-appearance:none; appearance:none; cursor:pointer;
+  }
+  html.is-ios .punch-row.time-native-wrap .ios-time-display{
+    width:100%; min-height:76px; border-radius:22px; font-family:var(--mono); font-size:2rem; font-weight:800;
+  }
+  html.is-ios .ios-picker-icon{
+    width:30px; height:30px; border-radius:999px; display:inline-flex; align-items:center; justify-content:center;
+    font-family:var(--font); font-size:.9rem; font-weight:900; color:var(--accent);
+    background:rgba(77,215,255,.11); border:1px solid rgba(77,215,255,.18);
+  }
+  html.is-ios .srow .time-small-wrap{position:relative; display:inline-flex; flex:none; width:136px; height:40px}
+  html.is-ios .srow .time-small-wrap input[type="time"]{
+    position:absolute; inset:0; z-index:2; width:100%; height:100%; min-width:0; max-width:none;
+    opacity:0; color:transparent; background:transparent; border:0; padding:0; margin:0;
+    -webkit-appearance:none; appearance:none; cursor:pointer;
+  }
+  html.is-ios .srow .time-small-wrap .ios-time-display{
+    width:100%; height:40px; border-radius:10px; padding:7px 10px; font-family:var(--mono); font-size:.95rem; font-weight:700;
+  }
+  html.is-ios .srow .time-small-wrap .ios-picker-icon{width:22px;height:22px;font-size:.7rem}
+
   .result{
     margin-top:20px; text-align:center; padding:26px 18px; border-radius:28px;
     background:linear-gradient(180deg, rgba(77,215,255,.09), rgba(255,255,255,.03)); border:1px solid var(--card-edge);
@@ -139,8 +183,9 @@
 
   <div class="card">
     <label class="field-label" data-i18n="punchInLabel" for="punchIn">Punch-in time</label>
-    <div class="punch-row">
-      <input type="time" id="punchIn" value="06:30" oninput="calc()" onchange="calc()">
+    <div class="punch-row time-native-wrap">
+      <input type="time" id="punchIn" value="06:30" oninput="syncTimeDisplay('punchIn');calc()" onchange="syncTimeDisplay('punchIn');calc()">
+      <div class="ios-time-display" aria-hidden="true"><span id="punchInDisplay">06:30</span><span class="ios-picker-icon">⌄</span></div>
     </div>
 
     <div class="result">
@@ -169,7 +214,10 @@
       </div>
       <div class="srow">
         <div><label data-i18n="schedStart">Schedule start</label><div class="sub" data-i18n="schedStartSub">Official day start time</div></div>
-        <input type="time" id="schedStart" value="06:30" oninput="saveAndCalc()">
+        <span class="time-native-wrap time-small-wrap">
+          <input type="time" id="schedStart" value="06:30" oninput="syncTimeDisplay('schedStart');saveAndCalc()" onchange="syncTimeDisplay('schedStart');saveAndCalc()">
+          <span class="ios-time-display" aria-hidden="true"><span id="schedStartDisplay">06:30</span><span class="ios-picker-icon">⌄</span></span>
+        </span>
       </div>
       <div class="srow">
         <div><label data-i18n="flexWindow">Flex window</label><div class="sub" data-i18n="flexWindowSub">Grace minutes after start</div></div>
@@ -218,53 +266,13 @@ function mergeSettings(base,extra){
 }
 function load(){try{return mergeSettings(cloneDefaults(),JSON.parse(localStorage.getItem("ppv2")||"{}"));}catch(e){return cloneDefaults();}}
 function save(){try{localStorage.setItem("ppv2",JSON.stringify(S));}catch(e){}}
-function setText(id,value){var el=$(id); if(el){el.textContent=value;}}
-function setHtml(id,value){var el=$(id); if(el){el.innerHTML=value;}}
-function reportError(err){
-  var wrap=$("statusWrap");
-  if(wrap){wrap.innerHTML='<span class="status late"><span class="dot"></span>Calculation error</span>';}
-  if(window.console && console.error){console.error(err);}
-}
 
 function pad(n){
   var s=String(n);
   return s.length<2?"0"+s:s;
 }
-function normalizeDigits(v){
-  var s=String(v==null?"":v);
-  var ar="٠١٢٣٤٥٦٧٨٩";
-  var fa="۰۱۲۳۴۵۶۷۸۹";
-  var out="";
-  for(var i=0;i<s.length;i++){
-    var ch=s.charAt(i);
-    var ai=ar.indexOf(ch);
-    var fi=fa.indexOf(ch);
-    if(ai>-1){out+=String(ai);}
-    else if(fi>-1){out+=String(fi);}
-    else{out+=ch;}
-  }
-  return out;
-}
-function cleanTimeValue(v,fallback){
-  var s=normalizeDigits(v).replace(/\s+/g,"").replace(/[\.،]/g,":");
-  var h=0,m=0,match;
-  if(/^\d{1,2}:\d{1,2}$/.test(s)){
-    match=s.split(":");
-    h=parseInt(match[0],10);
-    m=parseInt(match[1],10);
-  }else if(/^\d{3,4}$/.test(s)){
-    if(s.length===3){h=parseInt(s.charAt(0),10); m=parseInt(s.slice(1),10);}
-    else {h=parseInt(s.slice(0,2),10); m=parseInt(s.slice(2),10);}
-  }else if(/^\d{1,2}$/.test(s)){
-    h=parseInt(s,10); m=0;
-  }else{
-    return fallback || DEFAULTS.punchIn;
-  }
-  if(isNaN(h)||isNaN(m)||h<0||h>23||m<0||m>59){return fallback || DEFAULTS.punchIn;}
-  return pad(h)+":"+pad(m);
-}
 function toMin(hhmm){
-  var parts=cleanTimeValue(hhmm,"00:00").split(":");
+  var parts=String(hhmm||"0:0").split(":");
   var a=Number(parts[0]);
   var b=Number(parts[1]);
   return (a||0)*60+(b||0);
@@ -275,6 +283,12 @@ function fmt12(totalMin){
   return {t:h12+":"+pad(m),ap:ap};
 }
 function fmt24(totalMin){var mm=((totalMin%1440)+1440)%1440;return pad(Math.floor(mm/60))+":"+pad(mm%60);}
+function syncTimeDisplay(id){
+  var input=$(id);
+  var display=$(id+"Display");
+  if(input && display){display.textContent=input.value || (id==="schedStart"?S.schedStart:S.punchIn) || "06:30";}
+}
+function syncAllTimeDisplays(){syncTimeDisplay("punchIn");syncTimeDisplay("schedStart");}
 function formatDuration(totalMin){
   var hours=Math.floor(totalMin/60);
   var mins=Math.abs(totalMin%60);
@@ -285,141 +299,62 @@ function formatDuration(totalMin){
 function reqMin(){return (Number(S.rH)||0)*60+(Number(S.rM)||0);}
 
 function calc(){
-  try{
-    var punchEl=$("punchIn");
-    var raw=punchEl ? punchEl.value : S.punchIn;
-    var punch=cleanTimeValue(raw,S.punchIn||DEFAULTS.punchIn);
-    S.punchIn=punch;
-    save();
+  S.punchIn=$("punchIn").value||S.punchIn; syncTimeDisplay("punchIn"); save();
+  var pin=toMin($("punchIn").value);
+  var start=toMin(S.schedStart);
+  var flex=Number(S.flex)||0;
+  var req=reqMin();
+  var effStart=pin<start?start:pin;          // clock can't start before official start
+  var leave=effStart+req;
+  var lv=fmt12(leave);
+  $("leaveTime").innerHTML=lv.t+'<span class="ap">'+lv.ap+"</span>";
 
-    var pin=toMin(punch);
-    var start=toMin(S.schedStart);
-    var flex=Number(S.flex)||0;
-    var req=reqMin();
-    var effStart=pin<start?start:pin;
-    var leave=effStart+req;
-    var lv=fmt12(leave);
-    setHtml("leaveTime",lv.t+'<span class="ap">'+lv.ap+"</span>");
+  // info cells
+  $("reqVal").textContent=formatDuration(req);
+  $("inWin").textContent=fmt24(start)+" - "+fmt24(start+flex);
+  $("outWin").textContent=fmt24(start+req)+" - "+fmt24(start+req+flex);
 
-    setText("reqVal",formatDuration(req));
-    setText("inWin",fmt24(start)+" - "+fmt24(start+flex));
-    setText("outWin",fmt24(start+req)+" - "+fmt24(start+req+flex));
+  // status
+  var diff=pin-start; var cls,txt;
+  if(diff<0){cls="early";txt=Math.abs(diff)+" "+t("earlyBy");}
+  else if(diff>flex){cls="late";txt=(diff-flex)+" "+t("lateBy");}
+  else{cls="ok";txt=t("onTime");}
+  $("statusWrap").innerHTML='<span class="status '+cls+'"><span class="dot"></span>'+txt+"</span>";
 
-    var diff=pin-start; var cls,txt;
-    if(diff<0){cls="early";txt=Math.abs(diff)+" "+t("earlyBy");}
-    else if(diff>flex){cls="late";txt=(diff-flex)+" "+t("lateBy");}
-    else{cls="ok";txt=t("onTime");}
-    setHtml("statusWrap",'<span class="status '+cls+'"><span class="dot"></span>'+txt+"</span>");
-
-    var now=new Date(); var nowMin=now.getHours()*60+now.getMinutes();
-    var left=leave-nowMin;
-    if(left>0){ setHtml("remain","<b>"+formatDuration(left)+"</b> "+t("remaining")); }
-    else{ setHtml("remain",t("canLeave")); }
-  }catch(e){reportError(e);}
+  // remaining (vs current clock time, same-day planning)
+  var now=new Date(); var nowMin=now.getHours()*60+now.getMinutes();
+  var left=leave-nowMin;
+  if(left>0){ $("remain").innerHTML="<b>"+formatDuration(left)+"</b> "+t("remaining"); }
+  else{ $("remain").innerHTML=t("canLeave"); }
 }
 
 function step(id,d){var el=$(id);var v=(parseInt(el.value,10)||0)+d;
   if(id==="rH")v=Math.max(0,Math.min(24,v)); if(id==="rM"){if(v<0)v=55;if(v>59)v=0;} if(id==="flex")v=Math.max(0,Math.min(240,v));
   el.value=v;saveAndCalc();}
-function normalizeField(id,fallback){
-  var el=$(id);
-  if(!el){return;}
-  el.value=cleanTimeValue(el.value,fallback);
-}
-function saveAndCalc(){
-  S.rH=Number(($("rH")||{}).value)||0;
-  S.rM=Number(($("rM")||{}).value)||0;
-  S.schedStart=cleanTimeValue(($("schedStart")||{}).value,"06:30");
-  S.flex=Number(($("flex")||{}).value)||0;
-  save();
-  calc();
-}
+function saveAndCalc(){S.rH=Number($("rH").value)||0;S.rM=Number($("rM").value)||0;S.schedStart=$("schedStart").value||"06:30";S.flex=Number($("flex").value)||0;syncAllTimeDisplays();save();calc();}
 function applyLang(){
-  try{
-    document.documentElement.lang=S.lang; document.documentElement.dir=S.lang==="ar"?"rtl":"ltr";
-    $("langBtn").textContent=S.lang==="ar"?"English":"العربية";
-    var i18nNodes=document.querySelectorAll("[data-i18n]");
-    for(var i=0;i<i18nNodes.length;i++){
-      var el=i18nNodes[i];
-      el.textContent=t(el.getAttribute("data-i18n"));
-    }
-    var punchLabel=document.querySelector('[data-i18n="punchInLabel"]');
-    if(punchLabel){punchLabel.textContent=S.lang==="ar"?"أدخل وقت دخولك لمعرفة وقت مغادرتك":"Enter your punch-in time to know when you can leave";}
-    calc(); save();
-  }catch(e){reportError(e);}
+  document.documentElement.lang=S.lang; document.documentElement.dir=S.lang==="ar"?"rtl":"ltr";
+  $("langBtn").textContent=S.lang==="ar"?"English":"العربية";
+  var i18nNodes=document.querySelectorAll("[data-i18n]");
+  for(var i=0;i<i18nNodes.length;i++){
+    var el=i18nNodes[i];
+    el.textContent=t(el.getAttribute("data-i18n"));
+  }
+  var punchLabel=document.querySelector('[data-i18n="punchInLabel"]');
+  if(punchLabel){punchLabel.textContent=S.lang==="ar"?"أدخل وقت دخولك لمعرفة وقت مغادرتك":"Enter your punch-in time to know when you can leave";}
+  calc(); save();
 }
 function toggleLang(){S.lang=S.lang==="ar"?"en":"ar";applyLang();}
 
 function resetDefaults(){var currentLang=S.lang;S=cloneDefaults();S.lang=currentLang||DEFAULTS.lang;save();
-  $("rH").value=DEFAULTS.rH;$("rM").value=DEFAULTS.rM;$("schedStart").value=DEFAULTS.schedStart;$("flex").value=DEFAULTS.flex;$("punchIn").value=DEFAULTS.punchIn;calc();}
+  $("rH").value=DEFAULTS.rH;$("rM").value=DEFAULTS.rM;$("schedStart").value=DEFAULTS.schedStart;$("flex").value=DEFAULTS.flex;$("punchIn").value=DEFAULTS.punchIn;syncAllTimeDisplays();calc();}
 
-function tickClock(){
-  try{
-    var d=new Date();var f=fmt12(d.getHours()*60+d.getMinutes());
-    setText("liveClock",f.t+":"+pad(d.getSeconds())+" "+f.ap);
-  }catch(e){}
-}
-function attach(id,fn){
-  var el=$(id); if(!el){return;}
-  var events=["input","change","keyup","blur","touchend"];
-  for(var i=0;i<events.length;i++){
-    if(el.addEventListener){el.addEventListener(events[i],fn,false);}
-  }
-}
-function isIosDevice(){
-  var ua=navigator.userAgent||navigator.vendor||window.opera||"";
-  return /iPad|iPhone|iPod/.test(ua) || (navigator.platform==="MacIntel" && navigator.maxTouchPoints>1);
-}
-function enableIosTimeFallback(){
-  if(!isIosDevice()){return;}
-  var ids=["punchIn","schedStart"];
-  for(var i=0;i<ids.length;i++){
-    var el=$(ids[i]);
-    if(!el){continue;}
-    try{el.type="text";}catch(e){}
-    el.setAttribute("inputmode","numeric");
-    el.setAttribute("placeholder","HH:MM");
-    el.setAttribute("autocomplete","off");
-    el.setAttribute("spellcheck","false");
-    el.value=cleanTimeValue(el.value||S[ids[i]]||DEFAULTS[ids[i]],DEFAULTS[ids[i]]);
-  }
-}
-function initPunchPro(){
-  try{
-    if($("rH")){$("rH").value=S.rH;}
-    if($("rM")){$("rM").value=S.rM;}
-    if($("schedStart")){$("schedStart").value=S.schedStart;}
-    if($("flex")){$("flex").value=S.flex;}
-    if($("punchIn")){$("punchIn").value=S.punchIn;}
-    enableIosTimeFallback();
+function tickClock(){var d=new Date();var f=fmt12(d.getHours()*60+d.getMinutes());
+  $("liveClock").textContent=f.t+":"+pad(d.getSeconds())+" "+f.ap;}
 
-    attach("punchIn",function(){calc();});
-    attach("schedStart",function(){saveAndCalc();});
-    attach("rH",function(){saveAndCalc();});
-    attach("rM",function(){saveAndCalc();});
-    attach("flex",function(){saveAndCalc();});
-    var p=$("punchIn");
-    if(p && p.addEventListener){p.addEventListener("blur",function(){normalizeField("punchIn",S.punchIn||DEFAULTS.punchIn); calc();},false);}
-    var st=$("schedStart");
-    if(st && st.addEventListener){st.addEventListener("blur",function(){normalizeField("schedStart",S.schedStart||DEFAULTS.schedStart); saveAndCalc();},false);}
-
-    applyLang();
-    tickClock();
-    calc();
-    setTimeout(calc,0);
-    setTimeout(calc,100);
-    setTimeout(calc,500);
-    setInterval(tickClock,1000);
-    setInterval(calc,30000);
-  }catch(e){reportError(e);}
-}
-
-if(document.readyState==="loading"){
-  document.addEventListener("DOMContentLoaded",initPunchPro,false);
-}else{
-  initPunchPro();
-}
-if(window.addEventListener){window.addEventListener("load",function(){calc();setTimeout(calc,100);},false);}
+// init
+$("rH").value=S.rH;$("rM").value=S.rM;$("schedStart").value=S.schedStart;$("flex").value=S.flex;$("punchIn").value=S.punchIn;
+syncAllTimeDisplays();applyLang();tickClock();setInterval(tickClock,1000);setInterval(calc,30000);
 </script>
 </body>
 </html>
